@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.2 — 2026-07-13
+
+Hardening release — every fix below was **implemented by Opencode itself** via
+the plugin's own delegation flow (self-review found the issues, self-fix closed
+them; the orchestrator only wrote the spec and verified).
+
+- Linux portability: `mktemp` template now uses trailing X's (`/opencode:review` previously broke on GNU mktemp).
+- Review diff temp file no longer leaks — script-global path + EXIT trap plus explicit cleanup on all paths.
+- Version gate parses versions defensively (`grep -oE`) and skips with a warning when unparseable instead of bricking.
+- Server pid handling verifies process identity (`ps -o command=`) before trusting or killing a pid; stale pid files cleaned up.
+- Auth check no longer depends on the literal word "credentials" in CLI output.
+- Cancel kills the job's entire process group (supervisor pid = PGID via `set -m`), falls back to `pkill -P`, and only marks `cancelled` when a kill succeeded.
+- `strip_ansi` covers non-SGR CSI sequences; job IDs are collision-resistant (`-$$` suffix); bad base-refs error out instead of reporting "no changes"; `status` lists jobs even when the CLI is missing.
+- Worker agent instructions make the post-delegate `wait` imperative — the agent may not end its turn while a job is running.
+
 ## 0.4.1 — 2026-07-13
 
 - Proactive delegation triggers: the worker agent and delegate skill descriptions now

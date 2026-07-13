@@ -19,7 +19,7 @@ Actions: `run <prompt>` (foreground), `delegate <prompt>` (background job), `wai
 
 2. **Pick the mode:**
    - Short question / quick analysis → `run "<prompt>"` (answer comes back inline)
-   - Substantial implementation work → `delegate "<prompt>"` (returns JOB_ID immediately), then `wait <job-id>` — it blocks until the job finishes and prints the result. Prefer running `wait` with the Bash tool's `run_in_background: true` so you get notified instead of blocking a turn; fall back to a foreground `wait` with a generous timeout if backgrounding is unavailable.
+   - Substantial implementation work → `delegate "<prompt>"` (returns JOB_ID immediately). After `delegate` returns a JOB_ID, you MUST immediately run `wait <job-id> [timeout]` and you MUST NOT end your turn while the job is still running. Prefer running `wait` with the Bash tool's `run_in_background: true` so you get notified instead of blocking a turn; otherwise run a foreground `wait <job-id> <generous-timeout>` (e.g. 3600). Never assume the job is done without waiting on it — if `wait` times out, re-issue it.
 
 3. **Verify Opencode's work yourself.** After a job that modifies files: run `git status --short` and `git diff --stat`, spot-check the changed files with Read, and run the project's tests if a test command is known. Never report success based only on Opencode's claim.
 

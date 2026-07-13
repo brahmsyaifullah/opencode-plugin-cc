@@ -28,8 +28,14 @@ fi
 # Check auth
 echo ""
 echo "🔑 Checking authentication..."
-if opencode auth list 2>/dev/null | grep -q "credentials"; then
-  opencode auth list 2>/dev/null | sed $'s/\033\\[[0-9;]*m//g'
+auth_output=""
+if auth_output=$(opencode auth list 2>/dev/null); then
+  if [[ "$auth_output" == *"●"* ]]; then
+    printf '%s\n' "$auth_output" | sed $'s/\033\\[[0-9;]*m//g'
+  else
+    echo "⚠️  Authentication: not configured"
+    echo "  Run: opencode auth login"
+  fi
 else
   echo "⚠️  Authentication: not configured"
   echo "  Run: opencode auth login"

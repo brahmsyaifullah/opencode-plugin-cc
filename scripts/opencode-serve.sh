@@ -28,10 +28,20 @@ server_pid() {
   [[ -f "$PID_FILE" ]] && cat "$PID_FILE" || true
 }
 
+# Verify a pid is both alive AND actually an opencode process before
+# trusting it. Prevents stale-PID and PID-reuse hazards where the pid
+# file points at some unrelated process that recycled the id.
+pid_is_opencode() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+  [[ "$cmd" == *opencode* ]]
+}
+
 is_running() {
-  local pid
-  pid=$(server_pid)
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+  pid_is_opencode "$(server_pid)"
 }
 
 cmd_start() {
@@ -43,6 +53,14 @@ cmd_start() {
   if is_healthy; then
     echo "Server already running at $SERVER_URL"
     return 0
+  fi
+
+  # A leftover pid file pointing at a dead or recycled process can fool
+  # is_running later; clear it now if it isn't a live opencode process.
+  local stale_pid
+  stale_pid=$(server_pid)
+  if [[ -n "$stale_pid" ]] && ! pid_is_opencode "$stale_pid"; then
+    rm -f "$PID_FILE"
   fi
 
   mkdir -p "$STATE_DIR"
@@ -61,6 +79,8 @@ cmd_start() {
     waited=$((waited + 1))
   done
 
+  # Failed to come up — don't leave a stale pid file behind.
+  rm -f "$PID_FILE"
   log_error "Server did not become healthy within ${HEALTH_TIMEOUT_SECS}s. Log tail:"
   tail -5 "$LOG_FILE" >&2 || true
   exit 1
@@ -69,7 +89,7 @@ cmd_start() {
 cmd_stop() {
   local pid
   pid=$(server_pid)
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+  if [[ -n "$pid" ]] && pid_is_opencode "$pid"; then
     kill "$pid" 2>/dev/null || true
     rm -f "$PID_FILE"
     echo "Server stopped (pid $pid)."

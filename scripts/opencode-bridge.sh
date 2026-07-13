@@ -25,7 +25,13 @@ OPENCODE_ATTACH="${OPENCODE_ATTACH:-}"
 log_info() { echo "[opencode-bridge] $*" >&2; }
 log_error() { echo "[opencode-bridge] ERROR: $*" >&2; }
 
-strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
+strip_ansi() { sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g'; }
+
+# Script-global path for the review temp file. The EXIT trap fires in
+# top-level scope where any function-local would be gone, so cmd_review
+# records its diff file here and the trap cleans up via ${VAR:-}.
+REVIEW_DIFF_FILE=""
+_cleanup_review_diff() { rm -f "${REVIEW_DIFF_FILE:-}"; }
 
 MIN_MAJOR=1
 MIN_MINOR=17
@@ -39,12 +45,17 @@ check_opencode() {
     return 1
   fi
 
-  local version major minor
-  version=$("$OPENCODE_CMD" --version 2>/dev/null || echo "0.0.0")
+  local version major minor raw_version
+  raw_version=$("$OPENCODE_CMD" --version 2>/dev/null || echo "")
+  version=$(printf '%s' "$raw_version" | grep -oE '[0-9]+\.[0-9]+' | head -n1 || true)
+  if [[ -z "$version" ]]; then
+    echo "[opencode-bridge] WARNING: could not parse Opencode version from '${raw_version:-<empty>}'; skipping version gate." >&2
+    return 0
+  fi
   major=${version%%.*}
   minor=${version#*.}; minor=${minor%%.*}
   if (( major < MIN_MAJOR || (major == MIN_MAJOR && minor < MIN_MINOR) )); then
-    log_error "Opencode >= $MIN_MAJOR.$MIN_MINOR required (found $version) — needed for --title/--attach/-f."
+    log_error "Opencode >= $MIN_MAJOR.$MIN_MINOR required (found $raw_version) — needed for --title/--attach/-f."
     log_error "Upgrade: opencode upgrade"
     return 1
   fi
@@ -125,7 +136,7 @@ cmd_delegate() {
 
   cmd_gc 7 > /dev/null 2>&1 || true  # opportunistic cleanup of old jobs
 
-  local job_id="oc-$(date +%Y%m%d-%H%M%S)-$RANDOM"
+  local job_id="oc-$(date +%Y%m%d-%H%M%S)-$RANDOM-$$"
   local job_dir="$JOBS_DIR/$job_id"
   mkdir -p "$job_dir"
   printf '%s' "$prompt" > "$job_dir/prompt.txt"
@@ -134,20 +145,28 @@ cmd_delegate() {
   build_run_args
   RUN_ARGS+=(--title "$job_id")
 
+  # Briefly enable job control so the supervisor subshell gets its own
+  # process group; that lets `cancel` kill the whole group (including
+  # opencode's grandchildren) with `kill -- -<pgid>`.
+  set -m
   (
     # set +e: without it, a non-zero exit from `wait` would kill this
     # supervisor before the exit code is recorded, and failed jobs would
     # show up as "dead" instead of "failed(N)".
     set +e
-    # pid file holds the opencode process itself (not this wrapper), so
-    # cancel kills the real worker instead of orphaning it.
+    # Job control is auto-disabled inside this async subshell, so the
+    # opencode process (and any children it spawns) stays in the
+    # subshell's process group. The pid file holds the supervisor's pid,
+    # which equals the process-group id, so cancel can signal the group.
     "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$(cat "$job_dir/prompt.txt")" "$@" \
       > "$job_dir/output.log" 2>&1 &
-    echo $! > "$job_dir/pid"
     wait $!
     echo $? > "$job_dir/exit-code"
   ) 2>/dev/null &
-  disown
+  local supervisor_pid=$!
+  set +m
+  disown 2>/dev/null || true
+  echo "$supervisor_pid" > "$job_dir/pid"
 
   echo "JOB_ID: $job_id"
   echo "Task delegated to Opencode in background."
@@ -156,7 +175,6 @@ cmd_delegate() {
 }
 
 cmd_status() {
-  check_opencode || exit 1
   local job_id="${1:-}"
 
   if [[ -n "$job_id" ]]; then
@@ -166,6 +184,9 @@ cmd_status() {
     return
   fi
 
+  # Background jobs are pure on-disk state — list them even when the
+  # opencode CLI is missing. Only the server/sessions sections below
+  # actually need the CLI.
   if [[ -d "$JOBS_DIR" ]] && compgen -G "$JOBS_DIR/oc-*" > /dev/null; then
     echo "=== Background Jobs ==="
     local dir
@@ -176,6 +197,10 @@ cmd_status() {
     done
   else
     echo "No background jobs."
+  fi
+
+  if ! check_opencode; then
+    return 0
   fi
 
   echo ""
@@ -215,15 +240,36 @@ cmd_cancel() {
   local job_dir="$JOBS_DIR/$job_id"
   [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
 
-  if [[ -f "$job_dir/pid" ]] && kill -0 "$(<"$job_dir/pid")" 2>/dev/null; then
-    local pid
-    pid=$(<"$job_dir/pid")
-    pkill -P "$pid" 2>/dev/null || true   # opencode's own children first
-    kill "$pid" 2>/dev/null || true
+  if [[ ! -f "$job_dir/pid" ]]; then
+    echo "Job $job_id is not running (status: $(job_status "$job_dir"))."
+    return
+  fi
+
+  local pid
+  pid=$(<"$job_dir/pid")
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    echo "Job $job_id is not running (status: $(job_status "$job_dir"))."
+    return
+  fi
+
+  # Try killing the whole process group first (negative pid) so we don't
+  # orphan grandchildren spawned by opencode. Fall back to per-process
+  # kills if the group signal fails (e.g. the supervisor lost its PGID).
+  local killed=false
+  if kill -- -"$pid" 2>/dev/null; then
+    killed=true
+  else
+    pkill -P "$pid" 2>/dev/null && killed=true
+    if kill "$pid" 2>/dev/null; then
+      killed=true
+    fi
+  fi
+
+  if $killed; then
     touch "$job_dir/cancelled"
     echo "Job $job_id cancelled."
   else
-    echo "Job $job_id is not running (status: $(job_status "$job_dir"))."
+    echo "Job $job_id could not be killed (status: $(job_status "$job_dir"))."
   fi
 }
 
@@ -270,26 +316,32 @@ cmd_review() {
   local base_ref="${1:-}"
   check_opencode || exit 1
 
-  local diff_file
-  diff_file=$(mktemp -t opencode-review-XXXXXX.diff)
-  # ${diff_file:-} — the trap fires in top-level scope where the local is gone
-  trap 'rm -f "${diff_file:-}"' EXIT
+  REVIEW_DIFF_FILE=$(mktemp "${TMPDIR:-/tmp}/opencode-review.XXXXXX")
+  trap _cleanup_review_diff EXIT
 
   if [[ -n "$base_ref" ]]; then
-    git diff "$base_ref"...HEAD > "$diff_file" 2>/dev/null || true
+    if ! git rev-parse --verify --quiet "$base_ref" >/dev/null 2>&1; then
+      log_error "Base ref not found: $base_ref"
+      rm -f "$REVIEW_DIFF_FILE"
+      REVIEW_DIFF_FILE=""
+      exit 1
+    fi
+    git diff "$base_ref"...HEAD > "$REVIEW_DIFF_FILE" 2>/dev/null || true
   else
-    { git diff; git diff --staged; } > "$diff_file" 2>/dev/null || true
+    { git diff; git diff --staged; } > "$REVIEW_DIFF_FILE" 2>/dev/null || true
   fi
 
-  if [[ ! -s "$diff_file" ]]; then
+  if [[ ! -s "$REVIEW_DIFF_FILE" ]]; then
     echo "No changes found to review."
+    rm -f "$REVIEW_DIFF_FILE"
+    REVIEW_DIFF_FILE=""
     return 0
   fi
 
   local review_prompt="You are a senior code reviewer. The attached file is a git diff of pending changes in this repository. Review it thoroughly for: bugs and logic errors, security vulnerabilities, performance issues, missing error handling, and edge cases. You may read surrounding files in the repo for context, but DO NOT modify any files. Provide a structured review: each finding gets a severity (CRITICAL/HIGH/MEDIUM/LOW), file:line, one-line problem statement, and a suggested fix. End with a verdict: approve / approve-with-warnings / block."
 
   build_run_args
-  "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$review_prompt" -f "$diff_file" 2>&1 | strip_ansi
+  "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$review_prompt" -f "$REVIEW_DIFF_FILE" 2>&1 | strip_ansi
 }
 
 cmd_check() {
