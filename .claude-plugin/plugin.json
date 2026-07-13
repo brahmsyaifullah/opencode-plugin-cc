@@ -1,0 +1,10 @@
+{
+  "name": "Opencode",
+  "version": "0.1.0",
+  "description": "Use Opencode from inside Claude Code to review code, ask questions, or delegate tasks to the open source coding agent.",
+  "author": "Community",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

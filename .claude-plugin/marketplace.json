@@ -1,0 +1,12 @@
+{
+  "name": "community-opencode",
+  "owner": {
+    "name": "Community"
+  },
+  "plugins": [
+    {
+      "name": "opencode",
+      "source": "./"
+    }
+  ]
+}
