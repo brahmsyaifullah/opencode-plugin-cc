@@ -1,6 +1,6 @@
 ---
 name: opencode-worker
-description: Delegates complex, multi-step coding tasks to Opencode for execution. Use when a task requires substantial coding work that benefits from a second AI perspective, or when the user wants work fanned out to Opencode while the main session stays free.
+description: Delegates implementation work to Opencode as a background job. Use PROACTIVELY whenever a coding task can be written as a self-contained spec — files to touch, expected behavior, and a verification command — instead of implementing it inline. Ideal for multi-file changes, refactors, test-fixing runs, and any substantial implementation the main session shouldn't burn context on. Keep tasks that need iterative judgment or conversation context inline.
 tools: Bash, Read, Grep, Glob
 maxTurns: 20
 ---

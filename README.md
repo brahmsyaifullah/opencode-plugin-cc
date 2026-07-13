@@ -74,6 +74,25 @@ A delegation looks like this:
 
 Follow-up work continues Opencode's own session (`-s <session-id>`), so nothing needs re-explaining.
 
+## Automatic Delegation (no slash command)
+
+The worker agent and delegate skill carry proactive trigger descriptions, so orchestrator models can delegate on their own. The decision rule they encode:
+
+> Can the task be written as a **self-contained spec** — files to touch, expected behavior, and a verification command? If yes, delegate; if it needs iterative judgment or conversation context, keep it inline.
+
+For near-deterministic routing, add the same rule to your `CLAUDE.md`:
+
+```markdown
+## Opencode delegation policy
+Before starting implementation work, ask: can I write a SELF-CONTAINED spec for it —
+files to touch, expected behavior, and a verification command?
+- YES → delegate to the opencode-worker agent instead of implementing inline.
+- NO (needs iterative judgment or conversation context) → keep inline.
+Keep orchestration, review, and verification in the main session.
+```
+
+LLM routing is never 100% guaranteed, but a binary yes/no rule like this gets very high compliance.
+
 ## Context-Window Strategy
 
 1. **Delegate = background job.** `/opencode:delegate` returns a `JOB_ID` immediately; a backgrounded `wait` notifies Claude when the job finishes. No polling, zero context cost while it runs.

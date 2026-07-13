@@ -1,5 +1,5 @@
 ---
-description: Delegate a coding task to Opencode as a background job (keeps this session's context window intact)
+description: Delegate a coding task to Opencode as a background job (keeps this session's context window intact). Also use WITHOUT being asked whenever an implementation task can be written as a self-contained spec with a verification command — multi-file changes, refactors, test-fixing runs.
 argument-hint: <task description>
 ---
 

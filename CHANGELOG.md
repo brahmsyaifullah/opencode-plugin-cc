@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — 2026-07-13
+
+- Proactive delegation triggers: the worker agent and delegate skill descriptions now
+  encode the decision rule "delegate when the task can be written as a self-contained
+  spec with a verification command" — orchestrator models (Opus/Fable) auto-delegate
+  matching tasks without a slash command. Pair with a CLAUDE.md delegation policy for
+  near-deterministic routing (see README).
+
 ## 0.4.0 — 2026-07-13
 
 - `wait <job-id>` action: blocks until a job finishes, then prints its result. Run backgrounded, it turns job completion into an automatic notification — no polling.

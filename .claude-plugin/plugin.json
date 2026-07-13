@@ -1,6 +1,6 @@
 {
   "name": "opencode",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Delegate coding tasks to Opencode as background jobs — second-model reviews, Q&A, and implementation work without inflating your Claude Code context window.",
   "author": {
     "name": "Brahms Yaifullah",
