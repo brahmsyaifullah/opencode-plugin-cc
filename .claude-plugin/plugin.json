@@ -1,10 +1,20 @@
 {
   "name": "opencode",
   "version": "0.4.0",
-  "description": "Use Opencode from inside Claude Code to review code, ask questions, or delegate coding tasks as background jobs — keeping your Claude Code context window intact.",
-  "author": "Community",
+  "description": "Delegate coding tasks to Opencode as background jobs — second-model reviews, Q&A, and implementation work without inflating your Claude Code context window.",
+  "author": {
+    "name": "Brahms Yaifullah",
+    "url": "https://github.com/brahmsyaifullah"
+  },
+  "homepage": "https://github.com/brahmsyaifullah/opencode-plugin-cc",
+  "repository": "https://github.com/brahmsyaifullah/opencode-plugin-cc",
   "license": "MIT",
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "keywords": [
+    "opencode",
+    "delegation",
+    "background-jobs",
+    "code-review",
+    "multi-model",
+    "coding-agent"
+  ]
 }

@@ -1,12 +1,23 @@
 {
-  "name": "community-opencode",
+  "name": "opencode-marketplace",
+  "description": "Bridge Claude Code to Opencode: delegate coding tasks as background jobs, get second-model code reviews, and keep your context window intact.",
   "owner": {
-    "name": "Community"
+    "name": "Brahms Yaifullah",
+    "url": "https://github.com/brahmsyaifullah"
   },
   "plugins": [
     {
       "name": "opencode",
-      "source": "./"
+      "source": "./",
+      "description": "Delegate coding tasks to Opencode as background jobs — reviews, Q&A, and implementation work without inflating your Claude Code context window.",
+      "category": "productivity",
+      "keywords": [
+        "opencode",
+        "delegation",
+        "background-jobs",
+        "code-review",
+        "multi-model"
+      ]
     }
   ]
 }
