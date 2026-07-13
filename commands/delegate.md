@@ -1,24 +1,28 @@
-Delegate a task to Opencode for execution.
+---
+description: Delegate a coding task to Opencode as a background job (keeps this session's context window intact)
+argument-hint: <task description>
+---
 
-This hands off a development task to Opencode, which can read files, write code, run commands, and complete complex multi-step tasks.
+Delegate a development task to Opencode. Opencode can read files, write code, and run commands. The task runs as a **background job** — this session stays free and its context window stays small.
 
-Supported flags:
-- `--model <provider/model>`: Specify model (e.g., `anthropic/claude-sonnet-4-20250514`)
-- `--background`: Run in background
-- `--continue`: Continue the last Opencode session
-- `--session <id>`: Resume a specific session
+Steps:
 
-To execute:
-1. Take the task description from the command arguments
-2. If `--continue` is specified, add `-c` flag
-3. If `--session` is specified, add `-s <id>` flag
-4. Run:
-   ```bash
-   opencode run --auto [--model <model>] [-c | -s <id>] "<TASK_DESCRIPTION>"
-   ```
-5. Return the result to the user
+1. Formulate a complete, self-contained prompt from the user's request. Include everything Opencode needs, because it does not share this conversation's context: relevant file paths, error messages, expected behavior, constraints, and how to verify success (e.g. which test command to run).
 
-Examples:
-- `/opencode:delegate Fix the failing unit tests in the auth module`
-- `/opencode:delegate --model anthropic/claude-sonnet-4-20250514 Refactor the database connection pool`
-- `/opencode:delegate --continue Apply the suggested fix from the last session`
+2. Launch the job:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" delegate "<the detailed prompt>"
+```
+
+3. Report the `JOB_ID` to the user and tell them the result can be fetched with `/opencode:result <job-id>` (or `/opencode:status` to check progress). Do NOT busy-wait or poll in a loop.
+
+4. If the user asked to wait for the result, check once after a reasonable interval using the status action, then fetch the result.
+
+Session continuation:
+- To continue Opencode's previous session, append `-c` after the prompt: `... delegate "<prompt>" -c`
+- To resume a specific session: `... delegate "<prompt>" -s <session-id>`
+
+Model override: prefix with `OPENCODE_MODEL=<provider/model>` (e.g. `OPENCODE_MODEL=zai-coding-plan/glm-5.2`).
+
+If Opencode is missing, suggest `/opencode:setup`.

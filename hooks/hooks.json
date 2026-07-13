@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'if command -v opencode &>/dev/null; then VER=$(opencode --version 2>/dev/null || echo unknown); echo \"✅ Opencode $VER ready\"; else echo \"⚠️  Opencode not found. Run /opencode:setup to install.\"; fi'"
+            "command": "bash -c 'export PATH=\"$HOME/.opencode/bin:$PATH\"; if command -v opencode &>/dev/null; then echo \"Opencode $(opencode --version 2>/dev/null || echo unknown) ready — /opencode:delegate to hand off coding tasks\"; else echo \"Opencode not found. Run /opencode:setup to install.\"; fi'"
           }
         ]
       }

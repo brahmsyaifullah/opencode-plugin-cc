@@ -1,18 +1,18 @@
-Ask Opencode a question about the current codebase or any coding topic.
+---
+description: Ask Opencode a question about the codebase or any coding topic (foreground, answer returns inline)
+argument-hint: <question>
+---
 
-This sends your question to Opencode for analysis. Opencode will have access to the current working directory and can read files, search code, and provide detailed answers.
+Ask Opencode a question. Opencode has access to the current working directory and can read files, search code, and answer in detail.
 
-To execute:
-1. Take the user's question from the command arguments
-2. Run the following command, replacing `<QUESTION>` with the user's actual question:
-   ```bash
-   opencode run --auto "<QUESTION>"
-   ```
-3. Return the output to the user as-is
+Execute:
 
-If Opencode is not installed, suggest running `/opencode:setup` first.
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" run "$ARGUMENTS"
+```
 
-Examples:
-- `/opencode:ask How does the authentication system work in this project?`
-- `/opencode:ask What are the main dependencies and their purposes?`
-- `/opencode:ask Find potential security issues in the API routes`
+Then relay Opencode's answer to the user. Add your own assessment only if you disagree or can add something material.
+
+Notes:
+- Use this for questions with short-to-medium answers. For large multi-step coding tasks use `/opencode:delegate` instead (it runs in the background and keeps this session's context small).
+- If the command fails with "Opencode CLI not found", tell the user to run `/opencode:setup`.

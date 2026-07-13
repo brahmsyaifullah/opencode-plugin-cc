@@ -1,35 +1,20 @@
-Request a code review from Opencode on your current changes.
+---
+description: Request a code review from Opencode on pending changes (read-only, diff passed via temp file)
+argument-hint: [base-ref]
+---
 
-This command sends your uncommitted changes (or branch diff) to Opencode for a thorough code review.
+Ask Opencode to review code changes. The diff is written to a temp file and attached — it never inflates this session's context or hits shell argument limits.
 
-Supported flags:
-- `--base <ref>`: Compare against a specific branch (default: current uncommitted changes)
-- `--background`: Run the review in background mode
+Execute:
 
-To execute:
-1. Determine what to review:
-   - If `--base` is provided, get the diff: `git diff <base>...HEAD`
-   - Otherwise, get uncommitted changes: `git diff` and `git diff --staged`
+1. If the user provided a base ref (e.g. `main`), pass it; otherwise review uncommitted + staged changes:
 
-2. Construct the review prompt with the diff context
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" review $ARGUMENTS
+```
 
-3. Run:
-   ```bash
-   opencode run --auto "You are a senior code reviewer. Review the following code changes thoroughly. Look for:
-   - Bugs and logic errors
-   - Security vulnerabilities
-   - Performance issues
-   - Code style and best practices
-   - Missing error handling
-   - Potential edge cases
+2. Relay Opencode's findings to the user, ordered by severity. If Opencode flags something you believe is a false positive, say so and explain why.
 
-   Here are the changes:
-   $(git diff)
-   $(git diff --staged)
-
-   Provide a structured review with severity levels (critical/warning/suggestion) for each finding."
-   ```
-
-4. Return the review findings to the user
-
-Note: This command is read-only and will not make any changes to your code.
+Notes:
+- This is read-only: the review prompt instructs Opencode not to modify files.
+- If there are no pending changes, the script reports "No changes found to review."

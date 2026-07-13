@@ -1,101 +1,219 @@
 #!/usr/bin/env bash
 # opencode-bridge.sh — Bridge layer between Claude Code and Opencode CLI
-# This script translates Claude Code plugin commands into Opencode CLI invocations.
+#
+# Design goals:
+#   - Keep Claude Code's context window intact: long-running tasks run as
+#     background jobs; only compact summaries/results flow back to Claude.
+#   - Full transcripts stay on disk (job logs + `opencode export`).
 
 set -euo pipefail
 
 # --- Configuration ---
-OPENCODE_CMD="${OPENCODE_CMD:-opencode}"
-OPENCODE_SERVER_URL="${OPENCODE_URL:-http://127.0.0.1:4096}"
-OPENCODE_MODEL="${OPENCODE_MODEL:-}"
+# Opencode installs to ~/.opencode/bin which is often missing from
+# non-interactive shells (hooks, subagents).
+export PATH="$HOME/.opencode/bin:$PATH"
 
-# --- Helper Functions ---
+OPENCODE_CMD="${OPENCODE_CMD:-opencode}"
+OPENCODE_MODEL="${OPENCODE_MODEL:-}"
+JOBS_DIR="${OPENCODE_JOBS_DIR:-$HOME/.claude/opencode-jobs}"
+RESULT_TAIL_LINES="${OPENCODE_RESULT_LINES:-120}"
+
+# --- Helpers ---
 log_info() { echo "[opencode-bridge] $*" >&2; }
 log_error() { echo "[opencode-bridge] ERROR: $*" >&2; }
+
+strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 check_opencode() {
   if ! command -v "$OPENCODE_CMD" &>/dev/null; then
     log_error "Opencode CLI not found. Install it with:"
+    log_error "  curl -fsSL https://opencode.ai/install | bash"
     log_error "  npm i -g opencode-ai@latest"
     log_error "  brew install anomalyco/tap/opencode"
-    log_error "  curl -fsSL https://opencode.ai/install | bash"
     return 1
   fi
 }
 
-check_server() {
-  curl -s --max-time 2 "$OPENCODE_SERVER_URL/doc" > /dev/null 2>&1
+build_run_args() {
+  # Populates global array RUN_ARGS
+  RUN_ARGS=(run --auto)
+  if [[ -n "$OPENCODE_MODEL" ]]; then
+    RUN_ARGS+=(--model "$OPENCODE_MODEL")
+  fi
 }
 
-# --- Main Commands ---
-cmd_run() {
-  local prompt="$1"
-  shift
-  local extra_args=("$@")
+job_session_id() {
+  # Session title == job id, so we can map job -> opencode session
+  local job_id="$1"
+  "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi \
+    | awk -v t="$job_id" '$2 == t { print $1; exit }'
+}
 
+job_status() {
+  local job_dir="$1"
+  if [[ -f "$job_dir/cancelled" ]]; then
+    echo "cancelled"
+  elif [[ -f "$job_dir/exit-code" ]]; then
+    local code
+    code=$(<"$job_dir/exit-code")
+    [[ "$code" == "0" ]] && echo "done" || echo "failed($code)"
+  elif [[ -f "$job_dir/pid" ]] && kill -0 "$(<"$job_dir/pid")" 2>/dev/null; then
+    echo "running"
+  elif [[ -f "$job_dir/started" && ! -f "$job_dir/pid" ]]; then
+    # delegate forked but the supervisor hasn't written the pid yet
+    echo "running"
+  else
+    echo "dead"
+  fi
+}
+
+# --- Commands ---
+
+cmd_run() {
+  # Foreground run — for short Q&A where the answer should come back inline.
+  [[ $# -ge 1 && -n "${1:-}" ]] || { log_error "Usage: run <prompt> [flags]"; exit 1; }
+  local prompt="$1"; shift || true
+  check_opencode || exit 1
+  build_run_args
+  # NOTE: message must come BEFORE extra flags — `-f` is an array option and
+  # would otherwise swallow the message as a filename.
+  "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$prompt" "$@" 2>&1 | strip_ansi
+}
+
+cmd_delegate() {
+  # Background job — Claude gets a job id back immediately.
+  [[ $# -ge 1 && -n "${1:-}" ]] || { log_error "Usage: delegate <prompt> [flags]"; exit 1; }
+  local prompt="$1"; shift || true
   check_opencode || exit 1
 
-  local args=(run --auto)
+  local job_id="oc-$(date +%Y%m%d-%H%M%S)-$RANDOM"
+  local job_dir="$JOBS_DIR/$job_id"
+  mkdir -p "$job_dir"
+  printf '%s' "$prompt" > "$job_dir/prompt.txt"
+  touch "$job_dir/started"
 
-  if [[ -n "$OPENCODE_MODEL" ]]; then
-    args+=(--model "$OPENCODE_MODEL")
-  fi
+  build_run_args
+  RUN_ARGS+=(--title "$job_id")
 
-  args+=("${extra_args[@]}" "$prompt")
+  (
+    # set +e: without it, a non-zero exit from `wait` would kill this
+    # supervisor before the exit code is recorded, and failed jobs would
+    # show up as "dead" instead of "failed(N)".
+    set +e
+    # pid file holds the opencode process itself (not this wrapper), so
+    # cancel kills the real worker instead of orphaning it.
+    "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$(cat "$job_dir/prompt.txt")" "$@" \
+      > "$job_dir/output.log" 2>&1 &
+    echo $! > "$job_dir/pid"
+    wait $!
+    echo $? > "$job_dir/exit-code"
+  ) 2>/dev/null &
+  disown
 
-  log_info "Executing: $OPENCODE_CMD ${args[*]}"
-  "$OPENCODE_CMD" "${args[@]}"
-}
-
-cmd_review() {
-  local base_ref="${1:-}"
-  local diff_content
-
-  if [[ -n "$base_ref" ]]; then
-    diff_content=$(git diff "$base_ref"...HEAD 2>/dev/null || echo "No diff available")
-  else
-    diff_content="$(git diff 2>/dev/null)$(git diff --staged 2>/dev/null)"
-  fi
-
-  if [[ -z "$diff_content" ]]; then
-    echo "No changes found to review."
-    return 0
-  fi
-
-  local review_prompt="You are a senior code reviewer. Review the following code changes thoroughly.
-Look for: bugs, security vulnerabilities, performance issues, code style problems, missing error handling, edge cases.
-Provide a structured review with severity levels (critical/warning/suggestion) for each finding.
-
-Changes to review:
-$diff_content"
-
-  cmd_run "$review_prompt"
+  echo "JOB_ID: $job_id"
+  echo "Task delegated to Opencode in background."
+  echo "Check:  opencode-bridge.sh status $job_id"
+  echo "Result: opencode-bridge.sh result $job_id"
 }
 
 cmd_status() {
   check_opencode || exit 1
+  local job_id="${1:-}"
 
-  echo "=== Opencode Sessions ==="
-  "$OPENCODE_CMD" session list 2>/dev/null || echo "No sessions found"
+  if [[ -n "$job_id" ]]; then
+    local job_dir="$JOBS_DIR/$job_id"
+    [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
+    echo "$job_id: $(job_status "$job_dir")"
+    return
+  fi
+
+  if [[ -d "$JOBS_DIR" ]] && compgen -G "$JOBS_DIR/oc-*" > /dev/null; then
+    echo "=== Background Jobs ==="
+    local dir
+    for dir in "$JOBS_DIR"/oc-*/; do
+      local id
+      id=$(basename "$dir")
+      echo "$id: $(job_status "$dir")"
+    done
+  else
+    echo "No background jobs."
+  fi
 
   echo ""
-  echo "=== Server Status ==="
-  if check_server; then
-    echo "Headless server running at $OPENCODE_SERVER_URL"
+  echo "=== Recent Opencode Sessions ==="
+  "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi | awk 'NR <= 10' || echo "No sessions found"
+}
+
+cmd_result() {
+  local job_id="${1:-}"
+  [[ -n "$job_id" ]] || { log_error "Usage: result <job-id>"; exit 1; }
+  local job_dir="$JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
+
+  local status
+  status=$(job_status "$job_dir")
+  echo "STATUS: $status"
+
+  local session_id
+  session_id=$(job_session_id "$job_id" || true)
+  [[ -n "$session_id" ]] && echo "SESSION: $session_id (resume: opencode run -s $session_id, full log: opencode export $session_id)"
+
+  echo "--- output (last $RESULT_TAIL_LINES lines) ---"
+  if [[ -f "$job_dir/output.log" ]]; then
+    strip_ansi < "$job_dir/output.log" | tail -n "$RESULT_TAIL_LINES"
   else
-    echo "No headless server running (CLI mode active)"
+    echo "(no output yet)"
   fi
 }
 
-cmd_export() {
-  local session_id="${1:-}"
+cmd_cancel() {
+  local job_id="${1:-}"
+  [[ -n "$job_id" ]] || { log_error "Usage: cancel <job-id>"; exit 1; }
+  local job_dir="$JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
+
+  if [[ -f "$job_dir/pid" ]] && kill -0 "$(<"$job_dir/pid")" 2>/dev/null; then
+    kill "$(<"$job_dir/pid")" 2>/dev/null || true
+    touch "$job_dir/cancelled"
+    echo "Job $job_id cancelled."
+  else
+    echo "Job $job_id is not running (status: $(job_status "$job_dir"))."
+  fi
+}
+
+cmd_review() {
+  # Diff goes through a temp file (-f attach), never argv — avoids ARG_MAX
+  # limits and keeps the huge diff out of Claude's context.
+  local base_ref="${1:-}"
   check_opencode || exit 1
 
-  if [[ -n "$session_id" ]]; then
-    "$OPENCODE_CMD" export "$session_id" 2>/dev/null
+  local diff_file
+  diff_file=$(mktemp -t opencode-review-XXXXXX.diff)
+  # ${diff_file:-} — the trap fires in top-level scope where the local is gone
+  trap 'rm -f "${diff_file:-}"' EXIT
+
+  if [[ -n "$base_ref" ]]; then
+    git diff "$base_ref"...HEAD > "$diff_file" 2>/dev/null || true
   else
-    "$OPENCODE_CMD" export 2>/dev/null || echo "No session results available"
+    { git diff; git diff --staged; } > "$diff_file" 2>/dev/null || true
   fi
+
+  if [[ ! -s "$diff_file" ]]; then
+    echo "No changes found to review."
+    return 0
+  fi
+
+  local review_prompt="You are a senior code reviewer. The attached file is a git diff of pending changes in this repository. Review it thoroughly for: bugs and logic errors, security vulnerabilities, performance issues, missing error handling, and edge cases. You may read surrounding files in the repo for context, but DO NOT modify any files. Provide a structured review: each finding gets a severity (CRITICAL/HIGH/MEDIUM/LOW), file:line, one-line problem statement, and a suggested fix. End with a verdict: approve / approve-with-warnings / block."
+
+  build_run_args
+  "$OPENCODE_CMD" "${RUN_ARGS[@]}" "$review_prompt" -f "$diff_file" 2>&1 | strip_ansi
+}
+
+cmd_check() {
+  check_opencode || exit 1
+  echo "Opencode: $("$OPENCODE_CMD" --version 2>/dev/null)"
+  echo "Model: ${OPENCODE_MODEL:-<opencode default>}"
+  "$OPENCODE_CMD" auth list 2>/dev/null | strip_ansi || echo "Auth: run 'opencode auth login'"
 }
 
 # --- Entrypoint ---
@@ -105,19 +223,23 @@ main() {
 
   case "$action" in
     run)      cmd_run "$@" ;;
+    delegate) cmd_delegate "$@" ;;
     review)   cmd_review "$@" ;;
-    status)   cmd_status ;;
-    export)   cmd_export "$@" ;;
-    check)    check_opencode && echo "Opencode is available: $($OPENCODE_CMD --version 2>/dev/null)" ;;
+    status)   cmd_status "$@" ;;
+    result)   cmd_result "$@" ;;
+    cancel)   cmd_cancel "$@" ;;
+    check)    cmd_check ;;
     help)
       echo "Usage: opencode-bridge.sh <action> [args...]"
       echo ""
       echo "Actions:"
-      echo "  run <prompt> [flags]   Run a prompt through Opencode"
-      echo "  review [base-ref]      Review code changes"
-      echo "  status                 Show session and server status"
-      echo "  export [session-id]    Export session results"
-      echo "  check                  Verify Opencode installation"
+      echo "  run <prompt> [flags]     Foreground run (short Q&A)"
+      echo "  delegate <prompt> [flags] Background job; returns JOB_ID"
+      echo "  review [base-ref]        Review pending changes (or diff vs base-ref)"
+      echo "  status [job-id]          Job + session status"
+      echo "  result <job-id>          Fetch job result (tail of log + session id)"
+      echo "  cancel <job-id>          Kill a running job"
+      echo "  check                    Verify install + auth"
       ;;
     *)
       log_error "Unknown action: $action"

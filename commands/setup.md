@@ -1,26 +1,21 @@
-Verify that Opencode is installed and ready to use.
+---
+description: Verify Opencode is installed, authenticated, and ready
+---
 
-Run this diagnostic check:
+Run the diagnostic:
 
-1. Check if `opencode` CLI is available:
-   ```bash
-   command -v opencode && opencode --version
-   ```
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/ensure-opencode.sh" true
+```
 
-2. If Opencode is NOT installed, show the user these installation options:
-   - **npm**: `npm i -g opencode-ai@latest`
-   - **Homebrew (macOS/Linux)**: `brew install anomalyco/tap/opencode`
-   - **curl**: `curl -fsSL https://opencode.ai/install | bash`
-   - **scoop (Windows)**: `scoop install opencode`
+Then report to the user what is ready and what needs attention.
 
-3. If Opencode IS installed, check if a headless server is running:
-   ```bash
-   curl -s http://127.0.0.1:4096/doc > /dev/null 2>&1 && echo "Opencode server running on port 4096" || echo "No Opencode server running (optional - CLI mode will be used)"
-   ```
+If Opencode is NOT installed, offer these options:
+- **curl (recommended)**: `curl -fsSL https://opencode.ai/install | bash`
+- **npm**: `npm i -g opencode-ai@latest`
+- **Homebrew**: `brew install anomalyco/tap/opencode`
 
-4. Check authentication status:
-   ```bash
-   opencode auth list 2>/dev/null || echo "Run 'opencode auth login' to configure API keys"
-   ```
+If authentication is missing, the user must run `opencode auth login` themselves (interactive — suggest they type `! opencode auth login` in the prompt).
 
-5. Report the overall status to the user with a summary of what's ready and what needs setup.
+Optional configuration to mention:
+- Default model: set `"model": "provider/model"` in `~/.config/opencode/opencode.jsonc` (list available models with `opencode models`), or export `OPENCODE_MODEL` in the shell.

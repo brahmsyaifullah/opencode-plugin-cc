@@ -1,17 +1,22 @@
-Cancel a running Opencode session.
+---
+description: Cancel a running Opencode background job
+argument-hint: <job-id>
+---
 
-Supported arguments:
-- `<session-id>`: The specific session to cancel (optional)
+Cancel a running background job.
 
-To execute:
-1. If a session ID is provided:
-   ```bash
-   opencode session delete <session-id> 2>/dev/null && echo "Session cancelled" || echo "Failed to cancel session"
-   ```
+Execute:
 
-2. If no session ID, show available sessions and ask the user which to cancel:
-   ```bash
-   opencode session list 2>/dev/null
-   ```
+1. If a job ID was provided:
 
-3. Confirm the cancellation to the user
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" cancel $ARGUMENTS
+```
+
+2. If no job ID was given, list jobs first so the user can pick:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" status
+```
+
+Confirm the outcome to the user. Note: this kills the local job process; the partial Opencode session remains on disk and can be inspected with `/opencode:status`.

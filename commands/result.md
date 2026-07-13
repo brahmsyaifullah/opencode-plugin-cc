@@ -1,17 +1,23 @@
-Retrieve the result from a completed Opencode session.
+---
+description: Fetch the result of an Opencode background job
+argument-hint: <job-id>
+---
 
-Supported arguments:
-- `<session-id>`: The specific session ID to retrieve (optional, defaults to most recent)
+Fetch a background job's result.
 
-To execute:
-1. If a session ID is provided:
-   ```bash
-   opencode export <session-id> 2>/dev/null
-   ```
+Execute:
 
-2. If no session ID, export the most recent session:
-   ```bash
-   opencode export 2>/dev/null || echo "No session results available"
-   ```
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/opencode-bridge.sh" result $ARGUMENTS
+```
 
-3. Parse and present the results in a readable format
+The output contains:
+- `STATUS:` — done / running / failed
+- `SESSION:` — the Opencode session ID (usable for resume or full export)
+- The tail of the job's output log
+
+Then:
+1. Summarize for the user what Opencode did and its final answer. If Opencode modified files, run `git status --short` and list what changed.
+2. If the job is still `running`, say so — do not poll in a loop; the user can re-run this command later.
+3. If more detail is needed than the log tail shows, the full transcript is available via `opencode export <session-id>` — but only pull it in when actually necessary (it can be large).
+4. For follow-up work on the same task, delegate with `-s <session-id>` to continue that Opencode session.
