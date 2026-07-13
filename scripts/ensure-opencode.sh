@@ -50,12 +50,8 @@ fi
 if [[ "$CHECK_SERVER" == "true" ]]; then
   echo ""
   echo "🖥️  Checking headless server..."
-  if curl -s --max-time 2 "${OPENCODE_URL:-http://127.0.0.1:4096}/doc" > /dev/null 2>&1; then
-    echo "✅ Headless server: running"
-  else
-    echo "ℹ️  Headless server: not running"
-    echo "  (Optional — the plugin uses CLI mode; start with: opencode serve --port 4096)"
-  fi
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/opencode-serve.sh" status
+  echo "  (Optional — commands attach automatically when it runs; /opencode:serve start)"
 fi
 
 echo ""

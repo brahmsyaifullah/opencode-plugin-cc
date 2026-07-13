@@ -17,6 +17,9 @@ OPENCODE_CMD="${OPENCODE_CMD:-opencode}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-}"
 JOBS_DIR="${OPENCODE_JOBS_DIR:-$HOME/.claude/opencode-jobs}"
 RESULT_TAIL_LINES="${OPENCODE_RESULT_LINES:-120}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# OPENCODE_ATTACH=<url> forces attach mode; OPENCODE_ATTACH=off disables it.
+OPENCODE_ATTACH="${OPENCODE_ATTACH:-}"
 
 # --- Helpers ---
 log_info() { echo "[opencode-bridge] $*" >&2; }
@@ -34,11 +37,27 @@ check_opencode() {
   fi
 }
 
+attach_url() {
+  # Prints the server URL to attach to, if any.
+  case "$OPENCODE_ATTACH" in
+    off) return 1 ;;
+    "")  "$SCRIPT_DIR/opencode-serve.sh" url 2>/dev/null ;;
+    *)   echo "$OPENCODE_ATTACH" ;;
+  esac
+}
+
 build_run_args() {
   # Populates global array RUN_ARGS
   RUN_ARGS=(run --auto)
   if [[ -n "$OPENCODE_MODEL" ]]; then
     RUN_ARGS+=(--model "$OPENCODE_MODEL")
+  fi
+  # Opportunistic server attach: faster invocations when a headless server
+  # is running; standalone CLI otherwise. --dir pins the task to the
+  # caller's project, since the server's own cwd is unrelated.
+  local url
+  if url=$(attach_url) && [[ -n "$url" ]]; then
+    RUN_ARGS+=(--attach "$url" --dir "$PWD")
   fi
 }
 
@@ -140,6 +159,10 @@ cmd_status() {
   fi
 
   echo ""
+  echo "=== Server ==="
+  "$SCRIPT_DIR/opencode-serve.sh" status
+
+  echo ""
   echo "=== Recent Opencode Sessions ==="
   "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi | awk 'NR <= 10' || echo "No sessions found"
 }
@@ -213,6 +236,12 @@ cmd_check() {
   check_opencode || exit 1
   echo "Opencode: $("$OPENCODE_CMD" --version 2>/dev/null)"
   echo "Model: ${OPENCODE_MODEL:-<opencode default>}"
+  local url
+  if url=$(attach_url) && [[ -n "$url" ]]; then
+    echo "Mode: attached to server at $url"
+  else
+    echo "Mode: standalone CLI (start a server with /opencode:serve start)"
+  fi
   "$OPENCODE_CMD" auth list 2>/dev/null | strip_ansi || echo "Auth: run 'opencode auth login'"
 }
 

@@ -15,6 +15,7 @@ This plugin lets Claude Code delegate work to Opencode **as background jobs**, s
 | `/opencode:status` | List background jobs + recent Opencode sessions |
 | `/opencode:result` | Fetch a job's result (compact: status, session ID, log tail) |
 | `/opencode:cancel` | Kill a running background job |
+| `/opencode:serve` | Manage the optional headless server (start/stop/status) |
 
 Plus the `opencode-worker` subagent: delegates, polls, **verifies the work** (git diff, tests), and reports back a compact summary.
 
@@ -69,9 +70,19 @@ Claude Code
             │              (pid, prompt.txt, output.log, exit-code)
             ├─ review   → git diff → temp file → opencode run -f diff
             └─ status/result/cancel → job dir + opencode session list/export
+       └─ scripts/opencode-serve.sh (optional headless server)
+            └─ start/stop/status → opencode serve on 127.0.0.1:4096
 ```
 
 Each delegated job gets an Opencode session titled with the job ID, so jobs map 1:1 to resumable Opencode sessions.
+
+### Server attach mode (optional)
+
+When a headless server is running (`/opencode:serve start`), every bridge invocation automatically attaches to it (`opencode run --attach <url> --dir <cwd>`): lighter per-call client, shared session state, one warm server process instead of one cold CLI per job. When no server runs, commands fall back to standalone CLI mode transparently — both modes are fully supported.
+
+- The server binds to `127.0.0.1` only and serves all your projects (`--dir` pins each task to the caller's cwd).
+- `OPENCODE_ATTACH=off` forces standalone mode; `OPENCODE_ATTACH=<url>` attaches to an external server.
+- Caveat: cancelling a job in attach mode kills the local client; the server-side session may still run to completion.
 
 ## Configuration
 
@@ -81,6 +92,8 @@ Each delegated job gets an Opencode session titled with the job ID, so jobs map 
 | `OPENCODE_MODEL` | (Opencode default) | Model as `provider/model` (e.g. `zai-coding-plan/glm-5.2`); list with `opencode models` |
 | `OPENCODE_JOBS_DIR` | `~/.claude/opencode-jobs` | Where background job state lives |
 | `OPENCODE_RESULT_LINES` | `120` | How many log lines `result` returns |
+| `OPENCODE_SERVER_PORT` | `4096` | Headless server port |
+| `OPENCODE_ATTACH` | (auto) | `off` = force standalone; `<url>` = attach to external server |
 
 To pin a default model for everything Opencode runs, set it in `~/.config/opencode/opencode.jsonc`:
 
