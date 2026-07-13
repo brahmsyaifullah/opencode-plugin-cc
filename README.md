@@ -23,7 +23,7 @@ Plus the `opencode-worker` subagent: delegates, polls, **verifies the work** (gi
 
 The whole point of this plugin is delegation without context bloat:
 
-1. **Delegate = background job.** `/opencode:delegate` returns a `JOB_ID` immediately; only a few lines enter Claude's context.
+1. **Delegate = background job.** `/opencode:delegate` returns a `JOB_ID` immediately; only a few lines enter Claude's context. A backgrounded `wait` then notifies Claude when the job finishes — no polling, zero context cost while it runs.
 2. **Results come back compact.** `/opencode:result` returns status + session ID + the tail of the log, not the full transcript.
 3. **Full history stays on disk.** Job logs live in `~/.claude/opencode-jobs/<job-id>/`; complete transcripts via `opencode export <session-id>` — pulled into context only when actually needed.
 4. **Diffs never enter context.** `/opencode:review` writes the diff to a temp file and attaches it with `-f`.
@@ -69,7 +69,8 @@ Claude Code
             ├─ delegate → background job → ~/.claude/opencode-jobs/<id>/
             │              (pid, prompt.txt, output.log, exit-code)
             ├─ review   → git diff → temp file → opencode run -f diff
-            └─ status/result/cancel → job dir + opencode session list/export
+            ├─ wait     → blocks until job done, prints result (notification hook)
+            └─ status/result/cancel/gc → job dir + opencode session list/export
        └─ scripts/opencode-serve.sh (optional headless server)
             └─ start/stop/status → opencode serve on 127.0.0.1:4096
 ```

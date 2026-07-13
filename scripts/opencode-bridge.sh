@@ -27,12 +27,25 @@ log_error() { echo "[opencode-bridge] ERROR: $*" >&2; }
 
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
+MIN_MAJOR=1
+MIN_MINOR=17
+
 check_opencode() {
   if ! command -v "$OPENCODE_CMD" &>/dev/null; then
     log_error "Opencode CLI not found. Install it with:"
     log_error "  curl -fsSL https://opencode.ai/install | bash"
     log_error "  npm i -g opencode-ai@latest"
     log_error "  brew install anomalyco/tap/opencode"
+    return 1
+  fi
+
+  local version major minor
+  version=$("$OPENCODE_CMD" --version 2>/dev/null || echo "0.0.0")
+  major=${version%%.*}
+  minor=${version#*.}; minor=${minor%%.*}
+  if (( major < MIN_MAJOR || (major == MIN_MAJOR && minor < MIN_MINOR) )); then
+    log_error "Opencode >= $MIN_MAJOR.$MIN_MINOR required (found $version) — needed for --title/--attach/-f."
+    log_error "Upgrade: opencode upgrade"
     return 1
   fi
 }
@@ -64,8 +77,13 @@ build_run_args() {
 job_session_id() {
   # Session title == job id, so we can map job -> opencode session
   local job_id="$1"
-  "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi \
-    | awk -v t="$job_id" '$2 == t { print $1; exit }'
+  if command -v jq &>/dev/null; then
+    "$OPENCODE_CMD" session list --format json 2>/dev/null \
+      | jq -r --arg t "$job_id" 'map(select(.title == $t)) | first | .id // empty'
+  else
+    "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi \
+      | awk -v t="$job_id" '$2 == t { print $1; exit }'
+  fi
 }
 
 job_status() {
@@ -104,6 +122,8 @@ cmd_delegate() {
   [[ $# -ge 1 && -n "${1:-}" ]] || { log_error "Usage: delegate <prompt> [flags]"; exit 1; }
   local prompt="$1"; shift || true
   check_opencode || exit 1
+
+  cmd_gc 7 > /dev/null 2>&1 || true  # opportunistic cleanup of old jobs
 
   local job_id="oc-$(date +%Y%m%d-%H%M%S)-$RANDOM"
   local job_dir="$JOBS_DIR/$job_id"
@@ -164,7 +184,7 @@ cmd_status() {
 
   echo ""
   echo "=== Recent Opencode Sessions ==="
-  "$OPENCODE_CMD" session list 2>/dev/null | strip_ansi | awk 'NR <= 10' || echo "No sessions found"
+  "$OPENCODE_CMD" session list -n 8 2>/dev/null | strip_ansi || echo "No sessions found"
 }
 
 cmd_result() {
@@ -196,12 +216,52 @@ cmd_cancel() {
   [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
 
   if [[ -f "$job_dir/pid" ]] && kill -0 "$(<"$job_dir/pid")" 2>/dev/null; then
-    kill "$(<"$job_dir/pid")" 2>/dev/null || true
+    local pid
+    pid=$(<"$job_dir/pid")
+    pkill -P "$pid" 2>/dev/null || true   # opencode's own children first
+    kill "$pid" 2>/dev/null || true
     touch "$job_dir/cancelled"
     echo "Job $job_id cancelled."
   else
     echo "Job $job_id is not running (status: $(job_status "$job_dir"))."
   fi
+}
+
+cmd_wait() {
+  # Block until a job reaches a terminal state, then print its result.
+  # Meant to run inside a backgrounded shell so the caller gets notified
+  # on completion instead of polling.
+  local job_id="${1:-}"
+  [[ -n "$job_id" ]] || { log_error "Usage: wait <job-id> [timeout-secs]"; exit 1; }
+  local timeout_secs="${2:-3600}"
+  local job_dir="$JOBS_DIR/$job_id"
+  [[ -d "$job_dir" ]] || { log_error "Unknown job: $job_id"; exit 1; }
+
+  local waited=0 interval=5
+  while (( waited < timeout_secs )); do
+    case "$(job_status "$job_dir")" in
+      running) sleep "$interval"; waited=$((waited + interval)) ;;
+      *) cmd_result "$job_id"; return ;;
+    esac
+  done
+
+  log_error "Timed out after ${timeout_secs}s; job still running."
+  cmd_result "$job_id"
+  exit 1
+}
+
+cmd_gc() {
+  # Remove job directories older than N days (default 7).
+  local days="${1:-7}"
+  [[ -d "$JOBS_DIR" ]] || { echo "Nothing to clean."; return 0; }
+  local removed=0 dir
+  while IFS= read -r dir; do
+    # never remove a live job, however old
+    [[ "$(job_status "$dir")" == "running" ]] && continue
+    rm -rf "$dir"
+    removed=$((removed + 1))
+  done < <(find "$JOBS_DIR" -maxdepth 1 -type d -name 'oc-*' -mtime "+$days")
+  echo "Removed $removed job dir(s) older than $days day(s)."
 }
 
 cmd_review() {
@@ -256,7 +316,9 @@ main() {
     review)   cmd_review "$@" ;;
     status)   cmd_status "$@" ;;
     result)   cmd_result "$@" ;;
+    wait)     cmd_wait "$@" ;;
     cancel)   cmd_cancel "$@" ;;
+    gc)       cmd_gc "$@" ;;
     check)    cmd_check ;;
     help)
       echo "Usage: opencode-bridge.sh <action> [args...]"
@@ -267,7 +329,9 @@ main() {
       echo "  review [base-ref]        Review pending changes (or diff vs base-ref)"
       echo "  status [job-id]          Job + session status"
       echo "  result <job-id>          Fetch job result (tail of log + session id)"
+      echo "  wait <job-id> [timeout]  Block until job finishes, then print result"
       echo "  cancel <job-id>          Kill a running job"
+      echo "  gc [days]                Remove finished job dirs older than N days (default 7)"
       echo "  check                    Verify install + auth"
       ;;
     *)

@@ -1,6 +1,6 @@
 {
   "name": "opencode",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Use Opencode from inside Claude Code to review code, ask questions, or delegate coding tasks as background jobs — keeping your Claude Code context window intact.",
   "author": "Community",
   "license": "MIT",
